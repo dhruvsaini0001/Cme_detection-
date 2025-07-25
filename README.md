@@ -128,7 +128,7 @@ For detailed information about the project structure, see [PROJECT_STRUCTURE.md]
 ### Frontend Setup
 ```bash
 # Clone the repository
-git clone https://github.com/Karann1101/Identifying-HALO-CME-Events-based-on-Particle-Data.git
+git clone https://github.com/dhruvsaini0001/Cme_detection-.git
 cd Identifying-HALO-CME-Events-based-on-Particle-Data
 
 # Navigate to frontend directory
