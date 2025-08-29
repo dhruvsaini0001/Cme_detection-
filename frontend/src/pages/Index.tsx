@@ -1,17 +1,121 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Satellite, Activity, Database, Settings, BarChart3, AlertTriangle, Zap } from 'lucide-react';
+import { Satellite, Activity, Database, Settings, BarChart3, AlertTriangle, Zap, Loader2 } from 'lucide-react';
 import ParticleDataChart from '@/components/ParticleDataChart';
 import CMEDetectionPanel from '@/components/CMEDetectionPanel';
 import ThresholdConfiguration from '@/components/ThresholdConfiguration';
 import DataImportExport from '@/components/DataImportExport';
+import { api, type DataSummary, type ParticleData, type RecentCMEResponse } from '@/lib/api';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState('overview');
+  const [dataSummary, setDataSummary] = useState<DataSummary | null>(null);
+  const [particleData, setParticleData] = useState<ParticleData | null>(null);
+  const [recentCMEs, setRecentCMEs] = useState<RecentCMEResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Fetch data summary and particle data in parallel
+        const [summaryData, particleResponse, cmeEvents] = await Promise.all([
+          api.getDataSummary(),
+          api.getParticleData(),
+          api.getRecentCMEEvents()
+        ]);
+        
+        setDataSummary(summaryData);
+        setParticleData(particleResponse);
+        setRecentCMEs(cmeEvents);
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+    
+    // Set up auto-refresh every 5 minutes (300000ms) instead of 30 seconds
+    // This reduces server load and prevents constant UI refreshing
+    const interval = setInterval(fetchData, 300000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  // Calculate derived values from real data
+  const getLatestParticleFlux = () => {
+    if (!particleData || !particleData.flux.length) return 'N/A';
+    const latestFlux = particleData.flux[particleData.flux.length - 1];
+    return `${(latestFlux / 1000000).toFixed(1)}M`;
+  };
+
+  const getLatestSolarWindSpeed = () => {
+    if (!particleData || !particleData.velocity.length) return 'N/A';
+    const latestVelocity = particleData.velocity[particleData.velocity.length - 1];
+    return Math.round(latestVelocity).toString();
+  };
+
+  const getDataCoverage = () => {
+    if (!dataSummary) return 'N/A';
+    return dataSummary.data_coverage;
+  };
+
+  const getActiveCMECount = () => {
+    if (!dataSummary) return 'N/A';
+    return dataSummary.total_cme_events.toString();
+  };
+
+  const getMissionStatus = () => {
+    if (!dataSummary) return 'unknown';
+    return dataSummary.mission_status;
+  };
+
+  const getSystemHealth = () => {
+    if (!dataSummary) return 'unknown';
+    return dataSummary.system_health;
+  };
+
+  const getLastUpdate = () => {
+    if (!dataSummary) return 'Unknown';
+    const date = new Date(dataSummary.last_update);
+    return date.toLocaleString();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-deep-space via-slate-900 to-deep-space flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-8 w-8 animate-spin text-solar-orange mx-auto" />
+          <p className="text-cosmic">Loading mission data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-deep-space via-slate-900 to-deep-space flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <AlertTriangle className="h-8 w-8 text-destructive mx-auto" />
+          <p className="text-destructive">Error loading data: {error}</p>
+          <Button onClick={() => window.location.reload()} variant="outline">
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-deep-space via-slate-900 to-deep-space">
@@ -26,16 +130,23 @@ const Index = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-cosmic">Aditya-L1 CME Detection System</h1>
-                <p className="text-sm text-muted-foreground">SWIS-ASPEX Payload Data Analysis</p>
+                <p className="text-sm text-muted-foreground">
+                  SWIS-ASPEX Payload Data Analysis
+                  {dataSummary && (
+                    <span className="ml-2 text-xs">
+                      • Last update: {getLastUpdate()}
+                    </span>
+                  )}
+                </p>
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <Badge variant="outline" className="bg-green-500/20 text-green-400 border-green-500/50">
-                <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>
-                L1 Position Active
+              <Badge variant="outline" className={`${getMissionStatus() === 'operational' ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-red-500/20 text-red-400 border-red-500/50'}`}>
+                <div className={`w-2 h-2 ${getMissionStatus() === 'operational' ? 'bg-green-400' : 'bg-red-400'} rounded-full mr-2 animate-pulse`}></div>
+                {getMissionStatus() === 'operational' ? 'L1 Position Active' : 'L1 Position Inactive'}
               </Badge>
-              <Badge variant="outline" className="bg-blue-500/20 text-blue-400 border-blue-500/50">
-                SWIS Online
+              <Badge variant="outline" className={`${getSystemHealth() === 'excellent' ? 'bg-blue-500/20 text-blue-400 border-blue-500/50' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50'}`}>
+                SWIS {getSystemHealth() === 'excellent' ? 'Online' : 'Limited'}
               </Badge>
             </div>
           </div>
@@ -51,9 +162,9 @@ const Index = () => {
               <AlertTriangle className="h-4 w-4 text-yellow-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-solar">3</div>
+              <div className="text-2xl font-bold text-solar">{getActiveCMECount()}</div>
               <p className="text-xs text-muted-foreground">
-                +2 from last 24h
+                Total detected events
               </p>
             </CardContent>
           </Card>
@@ -64,7 +175,7 @@ const Index = () => {
               <Activity className="h-4 w-4 text-cyan-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-cosmic">2.4M</div>
+              <div className="text-2xl font-bold text-cosmic">{getLatestParticleFlux()}</div>
               <p className="text-xs text-muted-foreground">
                 particles/cm²/s
               </p>
@@ -77,7 +188,7 @@ const Index = () => {
               <Zap className="h-4 w-4 text-purple-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-stellar-purple">450</div>
+              <div className="text-2xl font-bold text-stellar-purple">{getLatestSolarWindSpeed()}</div>
               <p className="text-xs text-muted-foreground">
                 km/s
               </p>
@@ -90,7 +201,7 @@ const Index = () => {
               <Database className="h-4 w-4 text-green-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-400">98.7%</div>
+              <div className="text-2xl font-bold text-green-400">{getDataCoverage()}</div>
               <p className="text-xs text-muted-foreground">
                 Since Aug 2024
               </p>
@@ -172,22 +283,29 @@ const Index = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {[
-                      { date: '2024-12-25', magnitude: 'X2.1', speed: '1200 km/s', type: 'Full Halo' },
-                      { date: '2024-12-23', magnitude: 'M8.4', speed: '950 km/s', type: 'Partial Halo' },
-                      { date: '2024-12-20', magnitude: 'M5.2', speed: '750 km/s', type: 'Full Halo' },
-                    ].map((event, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-muted/20 border border-border/50">
-                        <div>
-                          <p className="font-semibold text-solar">{event.date}</p>
-                          <p className="text-sm text-muted-foreground">{event.type}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-semibold text-destructive">{event.magnitude}</p>
-                          <p className="text-sm text-muted-foreground">{event.speed}</p>
-                        </div>
+                    {recentCMEs && recentCMEs.events.length > 0 ? (
+                      recentCMEs.events.map((event, index) => {
+                        const eventDate = new Date(event.date);
+                        return (
+                          <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-muted/20 border border-border/50">
+                            <div>
+                              <p className="font-semibold text-solar">{eventDate.toLocaleDateString()}</p>
+                              <p className="text-sm text-muted-foreground">{event.type}</p>
+                              <p className="text-xs text-muted-foreground">Confidence: {(event.confidence * 100).toFixed(0)}%</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-semibold text-destructive">{event.magnitude}</p>
+                              <p className="text-sm text-muted-foreground">{event.speed} km/s</p>
+                              <p className="text-xs text-muted-foreground">{event.angular_width}°</p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center py-4 text-muted-foreground">
+                        <p>No recent CME events detected</p>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </CardContent>
               </Card>

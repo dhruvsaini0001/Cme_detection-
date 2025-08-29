@@ -6,9 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Database, Download, Upload, FileText, Calendar, Globe, CheckCircle, AlertCircle, Clock, AlertTriangle, Trash2 } from 'lucide-react';
+import { Database, Download, Upload, FileText, Calendar, Globe, CheckCircle, AlertCircle, Clock, AlertTriangle, Trash2, Loader2, Brain, Zap, Target } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, MLAnalysisResult, UploadResult } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 
 interface FileInfo {
@@ -16,8 +16,11 @@ interface FileInfo {
   size: number;
   type: string;
   lastModified: Date;
-  status: 'pending' | 'uploading' | 'completed' | 'error';
+  status: 'pending' | 'uploading' | 'analyzing' | 'completed' | 'error';
   progress: number;
+  analysisType?: 'standard' | 'ml';
+  mlResults?: MLAnalysisResult;
+  uploadResults?: UploadResult;
 }
 
 const DataImportExport = () => {
@@ -25,6 +28,8 @@ const DataImportExport = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [dataSource, setDataSource] = useState('issdc');
   const [selectedFiles, setSelectedFiles] = useState<FileInfo[]>([]);
+  const [syncLoading, setSyncLoading] = useState<{[key: string]: boolean}>({});
+  const [lastSyncTimes, setLastSyncTimes] = useState<{[key: string]: string}>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImport = () => {
@@ -43,6 +48,165 @@ const DataImportExport = () => {
     }, 500);
   };
 
+  const handleSyncAll = async () => {
+    try {
+      // Set loading state for all connections
+      const loadingState = dataConnections.reduce((acc, conn) => {
+        acc[conn.id] = true;
+        return acc;
+      }, {} as {[key: string]: boolean});
+      setSyncLoading(loadingState);
+      
+      const response = await fetch('http://localhost:8000/api/data/sync-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Comprehensive sync failed: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      // Update all last sync times
+      const currentTime = new Date().toLocaleString();
+      const newSyncTimes = dataConnections.reduce((acc, conn) => {
+        acc[conn.id] = currentTime;
+        return acc;
+      }, {} as {[key: string]: string});
+      setLastSyncTimes(newSyncTimes);
+      
+      // Show comprehensive success toast
+      toast({
+        title: "🚀 Comprehensive Sync Completed",
+        description: `Successfully synced ${result.successful_sources}/${result.total_sources} data sources. Total records: ${result.total_records}`,
+      });
+      
+      console.log('Comprehensive sync completed:', result);
+      
+    } catch (error) {
+      console.error('Comprehensive sync failed:', error);
+      toast({
+        title: "❌ Comprehensive Sync Failed",
+        description: `Failed to sync all data sources: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+        variant: "destructive",
+      });
+    } finally {
+      // Clear all loading states
+      setSyncLoading({});
+    }
+  };
+
+  const handleSyncNow = async (connectionId: string, connectionName: string) => {
+    try {
+      setSyncLoading(prev => ({ ...prev, [connectionId]: true }));
+      
+      // Generate specific sync name based on connection
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '');
+      const syncName = `${connectionName.replace(/\s+/g, '_')}_Sync_${timestamp}`;
+      
+      const response = await fetch('http://localhost:8000/api/data/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: syncName,
+          sync_type: 'sync',
+          data_source: connectionId,
+          settings: {
+            dataTypes: dataConnections.find(c => c.id === connectionId)?.dataTypes || [],
+            autoSync: true,
+            connectionName: connectionName,
+            syncTimestamp: new Date().toISOString()
+          }
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Sync failed: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      // Update last sync time with current timestamp
+      const syncTime = new Date().toLocaleString();
+      setLastSyncTimes(prev => ({ ...prev, [connectionId]: syncTime }));
+      
+      // Show success toast
+      toast({
+        title: "✅ Sync Completed Successfully",
+        description: `${connectionName}: Processed ${result.records_processed} records at ${syncTime}`,
+      });
+      
+      console.log(`Sync completed for ${connectionName}:`, result);
+      
+    } catch (error) {
+      console.error('Sync failed:', error);
+      toast({
+        title: "❌ Sync Failed",
+        description: `${connectionName}: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+        variant: "destructive",
+      });
+    } finally {
+      setSyncLoading(prev => ({ ...prev, [connectionId]: false }));
+    }
+  };
+
+  const handleConfigure = async (connectionId: string, connectionName: string) => {
+    try {
+      setSyncLoading(prev => ({ ...prev, [connectionId]: true }));
+      
+      // Generate specific configuration name
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '');
+      const configName = `${connectionName.replace(/\s+/g, '_')}_Config_${timestamp}`;
+      
+      const response = await fetch('http://localhost:8000/api/data/configure', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: configName,
+          sync_type: 'configure',
+          data_source: connectionId,
+          settings: {
+            dataTypes: dataConnections.find(c => c.id === connectionId)?.dataTypes || [],
+            autoSync: true,
+            syncInterval: '1h',
+            connectionName: connectionName,
+            configTimestamp: new Date().toISOString()
+          }
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Configuration failed: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      toast({
+        title: "⚙️ Configuration Updated",
+        description: `${connectionName}: Settings saved at ${new Date().toLocaleString()}`,
+      });
+      
+      console.log(`Configuration updated for ${connectionName}:`, result);
+      
+    } catch (error) {
+      console.error('Configuration failed:', error);
+      toast({
+        title: "❌ Configuration Failed",
+        description: `${connectionName}: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+        variant: "destructive",
+      });
+    } finally {
+      setSyncLoading(prev => ({ ...prev, [connectionId]: false }));
+    }
+  };
+
   const dataConnections = [
     {
       id: 'issdc',
@@ -51,7 +215,11 @@ const DataImportExport = () => {
       status: 'connected',
       lastSync: '2024-12-28 14:30:00',
       dataTypes: ['SWIS Level-2', 'Particle Flux', 'Solar Wind Parameters'],
-      icon: Database
+      icon: Database,
+      purpose: 'Primary data source for Aditya-L1 SWIS particle measurements and solar wind parameters',
+      realTimeData: true,
+      dataVolume: '~2GB/day',
+      updateFrequency: '10-minute cadence'
     },
     {
       id: 'cactus',
@@ -60,16 +228,24 @@ const DataImportExport = () => {
       status: 'connected',
       lastSync: '2024-12-28 12:15:00',  
       dataTypes: ['CME Events', 'Halo CME Catalog', 'Event Properties'],
-      icon: Globe
+      icon: Globe,
+      purpose: 'Reference catalog for CME events validation and historical analysis',
+      realTimeData: true,
+      dataVolume: '~50MB/month',
+      updateFrequency: 'Daily updates'
     },
     {
       id: 'nasa_spdf',
       name: 'NASA SPDF',
       description: 'Space Physics Data Facility',
-      status: 'pending',
+      status: 'connected',
       lastSync: 'Never',
       dataTypes: ['CDF Files', 'Solar Wind Data', 'Magnetic Field'],
-      icon: Database
+      icon: Database,
+      purpose: 'Supplementary magnetic field and multi-mission solar wind data for cross-validation',
+      realTimeData: true,
+      dataVolume: '~1GB/day',
+      updateFrequency: '1-minute cadence'
     }
   ];
 
@@ -106,31 +282,96 @@ const DataImportExport = () => {
   // File upload mutation
   const uploadMutation = useMutation({
     mutationFn: (file: File) => api.uploadSWISData(file),
-    onSuccess: (data) => {
+    onSuccess: (data: UploadResult) => {
+      const isSuccess = data.status === 'analyzed';
       toast({
-        title: "File Uploaded Successfully",
-        description: `${data.filename} has been processed and is ready for analysis.`,
+        title: isSuccess ? "🚀 File Analyzed Successfully" : "⚠️ File Upload Issue",
+        description: isSuccess 
+          ? `${data.filename}: Detected ${data.ml_analysis?.cme_events_detected || 0} CME events`
+          : `${data.filename}: ${data.error || 'Processing failed'}`,
+        variant: isSuccess ? "default" : "destructive"
       });
-      // Update file status
+      
+      // Update file status with results
       setSelectedFiles(prev => prev.map(f => 
         f.name === data.filename 
-          ? { ...f, status: 'completed' as const, progress: 100 }
+          ? { 
+              ...f, 
+              status: isSuccess ? 'completed' as const : 'error' as const, 
+              progress: 100,
+              uploadResults: data,
+              analysisType: 'standard'
+            }
           : f
       ));
     },
     onError: (error: any) => {
       toast({
-        title: "Upload Failed",
+        title: "❌ Upload Failed",
         description: error.message || "Failed to upload file",
         variant: "destructive",
       });
-      // Update file status
       setSelectedFiles(prev => prev.map(f => 
         f.status === 'uploading' 
           ? { ...f, status: 'error' as const, progress: 0 }
           : f
       ));
     },
+  });
+
+  // ML Analysis mutation
+  const mlAnalysisMutation = useMutation({
+    mutationFn: (file: File) => api.analyzeCDFWithML(file),
+    onSuccess: (data: MLAnalysisResult) => {
+      toast({
+        title: "🧠 ML Analysis Completed",
+        description: `${data.file_info.filename}: AI detected ${data.ml_results.events_detected} CME events with ${data.ml_results.model_performance.model_version}`,
+      });
+      
+      // Update file status with ML results
+      setSelectedFiles(prev => prev.map(f => 
+        f.name === data.file_info.filename 
+          ? { 
+              ...f, 
+              status: 'completed' as const, 
+              progress: 100,
+              mlResults: data,
+              analysisType: 'ml'
+            }
+          : f
+      ));
+    },
+    onError: (error: any) => {
+      toast({
+        title: "🤖 ML Analysis Failed",
+        description: error.message || "ML analysis encountered an error",
+        variant: "destructive",
+      });
+      setSelectedFiles(prev => prev.map(f => 
+        f.status === 'analyzing' 
+          ? { ...f, status: 'error' as const, progress: 0 }
+          : f
+      ));
+    },
+  });
+
+  // Get ML model info
+  const { data: mlModelInfo, error: mlModelError, isLoading: mlModelLoading } = useQuery({
+    queryKey: ['ml-model-info'],
+    queryFn: async () => {
+      try {
+        console.log('Fetching ML model info from:', `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/ml/model-info`);
+        const result = await api.getMLModelInfo();
+        console.log('ML model info received:', result);
+        return result;
+      } catch (error) {
+        console.error('Error fetching ML model info:', error);
+        throw error;
+      }
+    },
+    staleTime: 600000, // 10 minutes
+    retry: 3,
+    retryDelay: 1000,
   });
 
   // Get data summary
@@ -153,7 +394,7 @@ const DataImportExport = () => {
     setSelectedFiles(prev => [...prev, ...newFiles]);
   };
 
-  const handleUpload = async () => {
+  const handleUpload = async (analysisType: 'standard' | 'ml' = 'standard') => {
     const pendingFiles = selectedFiles.filter(f => f.status === 'pending');
     if (pendingFiles.length === 0) return;
 
@@ -161,17 +402,18 @@ const DataImportExport = () => {
       const file = Array.from(fileInputRef.current?.files || []).find(f => f.name === fileInfo.name);
       if (!file) continue;
 
-      // Update status to uploading
+      // Update status to uploading or analyzing
+      const newStatus: 'uploading' | 'analyzing' = analysisType === 'ml' ? 'analyzing' : 'uploading';
       setSelectedFiles(prev => prev.map(f => 
         f.name === fileInfo.name 
-          ? { ...f, status: 'uploading' as const }
+          ? { ...f, status: newStatus, analysisType }
           : f
       ));
 
       // Simulate progress
       const progressInterval = setInterval(() => {
         setSelectedFiles(prev => prev.map(f => {
-          if (f.name === fileInfo.name && f.status === 'uploading' && f.progress < 90) {
+          if (f.name === fileInfo.name && (f.status === 'uploading' || f.status === 'analyzing') && f.progress < 90) {
             return { ...f, progress: f.progress + Math.random() * 10 };
           }
           return f;
@@ -179,11 +421,15 @@ const DataImportExport = () => {
       }, 200);
 
       try {
-        await uploadMutation.mutateAsync(file);
+        if (analysisType === 'ml') {
+          await mlAnalysisMutation.mutateAsync(file);
+        } else {
+          await uploadMutation.mutateAsync(file);
+        }
         clearInterval(progressInterval);
       } catch (error) {
         clearInterval(progressInterval);
-        // Error handling is done in mutation
+        // Error handling is done in mutations
       }
     }
   };
@@ -200,29 +446,41 @@ const DataImportExport = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const getStatusIcon = (status: FileInfo['status']) => {
+  const getStatusIcon = (status: string) => {
     switch (status) {
       case 'pending':
         return <Clock className="h-4 w-4 text-muted-foreground" />;
       case 'uploading':
         return <Upload className="h-4 w-4 text-blue-400 animate-pulse" />;
+      case 'analyzing':
+        return <Brain className="h-4 w-4 text-green-400 animate-pulse" />;
       case 'completed':
+        return <CheckCircle className="h-4 w-4 text-green-400" />;
+      case 'connected':
         return <CheckCircle className="h-4 w-4 text-green-400" />;
       case 'error':
         return <AlertTriangle className="h-4 w-4 text-red-400" />;
+      default:
+        return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
-  const getStatusColor = (status: FileInfo['status']) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending':
         return 'bg-gray-500/20 text-gray-400 border-gray-500/50';
       case 'uploading':
         return 'bg-blue-500/20 text-blue-400 border-blue-500/50';
+      case 'analyzing':
+        return 'bg-green-500/20 text-green-400 border-green-500/50';
       case 'completed':
+        return 'bg-green-500/20 text-green-400 border-green-500/50';
+      case 'connected':
         return 'bg-green-500/20 text-green-400 border-green-500/50';
       case 'error':
         return 'bg-red-500/20 text-red-400 border-red-500/50';
+      default:
+        return 'bg-gray-500/20 text-gray-400 border-gray-500/50';
     }
   };
 
@@ -274,6 +532,38 @@ const DataImportExport = () => {
         </TabsList>
 
         <TabsContent value="sources" className="space-y-6">
+          {/* Comprehensive Sync Controls */}
+          <Card className="space-card">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-cosmic">Data Source Management</CardTitle>
+                  <CardDescription>
+                    Manage connections and synchronize real-time data from all sources
+                  </CardDescription>
+                </div>
+                <Button 
+                  variant="outline" 
+                  className="border-accent/50 text-accent hover:bg-accent/10"
+                  disabled={Object.values(syncLoading).some(loading => loading)}
+                  onClick={() => handleSyncAll()}
+                >
+                  {Object.values(syncLoading).some(loading => loading) ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Syncing All...
+                    </>
+                  ) : (
+                    <>
+                      <Database className="h-4 w-4 mr-2" />
+                      Sync All Sources
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardHeader>
+          </Card>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {dataConnections.map((connection) => {
               const Icon = connection.icon;
@@ -296,6 +586,11 @@ const DataImportExport = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Purpose</Label>
+                      <p className="text-sm mt-1">{connection.purpose}</p>
+                    </div>
+
+                    <div>
                       <Label className="text-sm font-medium text-muted-foreground">Data Types</Label>
                       <div className="flex flex-wrap gap-1 mt-1">
                         {connection.dataTypes.map((type, index) => (
@@ -306,9 +601,22 @@ const DataImportExport = () => {
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Data Volume</Label>
+                        <p className="text-sm font-mono">{connection.dataVolume}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Update Frequency</Label>
+                        <p className="text-sm font-mono">{connection.updateFrequency}</p>
+                      </div>
+                    </div>
+
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Last Sync</Label>
-                      <p className="text-sm font-mono">{connection.lastSync}</p>
+                      <p className="text-sm font-mono">
+                        {lastSyncTimes[connection.id] || connection.lastSync}
+                      </p>
                     </div>
 
                     <div className="flex space-x-2">
@@ -316,17 +624,33 @@ const DataImportExport = () => {
                         variant="outline" 
                         size="sm" 
                         className="flex-1 border-border/50"
-                        disabled={connection.status !== 'connected'}
+                        disabled={syncLoading[connection.id]}
+                        onClick={() => handleConfigure(connection.id, connection.name)}
                       >
-                        Configure
+                        {syncLoading[connection.id] ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            Configuring...
+                          </>
+                        ) : (
+                          'Configure'
+                        )}
                       </Button>
                       <Button 
                         variant="outline" 
                         size="sm" 
                         className="flex-1 border-border/50"
-                        disabled={connection.status !== 'connected'}
+                        disabled={syncLoading[connection.id]}
+                        onClick={() => handleSyncNow(connection.id, connection.name)}
                       >
-                        Sync Now
+                        {syncLoading[connection.id] ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            Syncing...
+                          </>
+                        ) : (
+                          'Sync Now'
+                        )}
                       </Button>
                     </div>
                   </CardContent>
@@ -583,7 +907,7 @@ const DataImportExport = () => {
                 <h4 className="font-medium">Selected Files ({selectedFiles.length})</h4>
                 <div className="flex space-x-2">
                   <Button
-                    onClick={handleUpload}
+                    onClick={() => handleUpload('standard')}
                     disabled={uploadMutation.isPending || selectedFiles.every(f => f.status !== 'pending')}
                     className="bg-solar-orange hover:bg-solar-orange/90 text-white"
                   >
@@ -596,6 +920,24 @@ const DataImportExport = () => {
                       <>
                         <Upload className="h-4 w-4 mr-2" />
                         Upload All
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => handleUpload('ml')}
+                    disabled={mlAnalysisMutation.isPending || selectedFiles.every(f => f.status !== 'pending')}
+                    variant="outline"
+                    className="border-green-500 text-green-500 hover:bg-green-50"
+                  >
+                    {mlAnalysisMutation.isPending ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-500 mr-2"></div>
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <Brain className="h-4 w-4 mr-2" />
+                        ML Analysis
                       </>
                     )}
                   </Button>
@@ -620,6 +962,11 @@ const DataImportExport = () => {
                         <p className="text-xs text-muted-foreground">
                           {formatFileSize(file.size)} • {file.lastModified.toLocaleDateString()}
                         </p>
+                        {file.analysisType === 'ml' && (
+                          <p className="text-xs text-green-400">
+                            🧠 ML Analysis {file.status === 'completed' ? 'Complete' : 'Pending'}
+                          </p>
+                        )}
                       </div>
                     </div>
                     
@@ -646,6 +993,71 @@ const DataImportExport = () => {
                   </div>
                 ))}
               </div>
+
+              {/* ML Analysis Results */}
+              {selectedFiles.some(f => f.mlResults) && (
+                <div className="mt-6 space-y-4">
+                  <h4 className="font-medium text-green-400">🧠 ML Analysis Results</h4>
+                  <div className="space-y-3">
+                    {selectedFiles
+                      .filter(f => f.mlResults)
+                      .map((file, index) => (
+                        <div key={index} className="p-4 rounded-lg border border-green-500/20 bg-green-500/5">
+                          <div className="flex items-center justify-between mb-3">
+                            <h5 className="font-medium text-sm">{file.name}</h5>
+                            <Badge variant="outline" className="bg-green-500/20 text-green-400 border-green-500/50">
+                              <Target className="h-3 w-3 mr-1" />
+                              {(file.mlResults!.prediction.confidence * 100).toFixed(1)}% Confidence
+                            </Badge>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">CME Detected:</span>
+                              <p className="font-medium text-green-400">
+                                {file.mlResults!.prediction.cme_detected ? '✅ Yes' : '❌ No'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Probability:</span>
+                              <p className="font-medium">
+                                {(file.mlResults!.prediction.probability * 100).toFixed(1)}%
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Model Version:</span>
+                              <p className="font-medium">{file.mlResults!.model_info.version}</p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Processing Time:</span>
+                              <p className="font-medium">{file.mlResults!.processing_time.toFixed(2)}s</p>
+                            </div>
+                          </div>
+
+                          {file.mlResults!.prediction.cme_detected && (
+                            <div className="mt-3 p-3 rounded border border-orange-500/20 bg-orange-500/5">
+                              <h6 className="font-medium text-orange-400 mb-2">⚠️ CME Event Details</h6>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                                <div>
+                                  <span className="text-muted-foreground">Severity:</span>
+                                  <p className="font-medium capitalize">{file.mlResults!.prediction.severity}</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Estimated Speed:</span>
+                                  <p className="font-medium">{file.mlResults!.prediction.estimated_speed} km/s</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Features Used:</span>
+                                  <p className="font-medium">{file.mlResults!.features_analyzed}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

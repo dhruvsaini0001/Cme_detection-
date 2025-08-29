@@ -11,6 +11,14 @@ export interface AnalysisRequest {
   end_date: string;
   analysis_type?: 'full' | 'quick' | 'threshold_only';
   config_overrides?: Record<string, any>;
+  advanced_settings?: {
+    velocityThreshold?: number;
+    accelerationThreshold?: number;
+    angularWidthMin?: number;
+    confidenceThreshold?: number;
+    includePartialHalos?: boolean;
+    filterWeakEvents?: boolean;
+  };
 }
 
 export interface ThresholdConfig {
@@ -51,6 +59,116 @@ export interface ParticleData {
   };
 }
 
+export interface MLAnalysisResult {
+  analysis_type: string;
+  file_info: {
+    filename: string;
+    size_bytes: number;
+    data_points: number;
+  };
+  ml_results: {
+    events_detected: number;
+    predictions: MLPrediction[];
+    model_performance: ModelMetrics;
+  };
+  data_summary: {
+    time_range: {
+      start: string;
+      end: string;
+      duration_hours: number;
+    };
+    data_quality: {
+      completeness: string;
+      valid_measurements: number;
+    };
+  };
+  recommendations: string[];
+  timestamp: string;
+}
+
+export interface MLPrediction {
+  event_id: string;
+  detection_time: string;
+  parameters: {
+    velocity: number;
+    density: number;
+    temperature: number;
+  };
+  ml_metrics: {
+    probability: number;
+    confidence_score: number;
+    anomaly_score: number;
+  };
+  physics: {
+    estimated_arrival: string;
+    transit_time_hours: number;
+    severity: 'Low' | 'Medium' | 'High';
+  };
+  data_source: string;
+}
+
+export interface ModelMetrics {
+  total_data_points: number;
+  analysis_coverage: string;
+  feature_count: number;
+  detection_rate: string;
+  model_version: string;
+  processing_time: string;
+}
+
+export interface MLModelInfo {
+  model_type: string;
+  version: string;
+  training_data: string;
+  features: string[];
+  performance_metrics: {
+    accuracy: number;
+    precision: number;
+    recall: number;
+    f1_score: number;
+    auc_roc: number;
+  };
+  detection_capabilities: {
+    min_velocity_threshold: string;
+    temporal_resolution: string;
+    prediction_horizon: string;
+    confidence_threshold: string;
+  };
+  last_training: string;
+  model_size: string;
+  supported_formats: string[];
+}
+
+export interface UploadResult {
+  filename: string;
+  file_size: number;
+  status: 'analyzed' | 'error';
+  processing_status: 'completed' | 'failed';
+  processing_time?: string;
+  data_quality?: {
+    total_points: number;
+    valid_points: number;
+    coverage_percentage: number;
+    time_range: {
+      start: string;
+      end: string;
+    };
+    parameter_ranges: {
+      velocity: { min: number; max: number; mean: number };
+      density: { min: number; max: number; mean: number };
+    };
+  };
+  ml_analysis?: {
+    cme_events_detected: number;
+    detection_method: string;
+    model_confidence: string;
+    analysis_timestamp: string;
+  };
+  detected_cme_events?: CMEEvent[];
+  recommendations: string[];
+  error?: string;
+}
+
 export interface DataSummary {
   mission_status: string;
   data_coverage: string;
@@ -58,6 +176,21 @@ export interface DataSummary {
   total_cme_events: number;
   active_alerts: number;
   system_health: string;
+}
+
+export interface RecentCMEEvent {
+  date: string;
+  magnitude: string;
+  speed: number;
+  angular_width: number;
+  type: string;
+  confidence: number;
+}
+
+export interface RecentCMEResponse {
+  events: RecentCMEEvent[];
+  total_count: number;
+  date_range: string;
 }
 
 class ApiError extends Error {
@@ -100,6 +233,11 @@ export const api = {
     return apiRequest<DataSummary>('/api/data/summary');
   },
 
+  // Recent CME events
+  async getRecentCMEEvents() {
+    return apiRequest<RecentCMEResponse>('/api/cme/recent');
+  },
+
   // CME Analysis
   async analyzeCMEEvents(request: AnalysisRequest) {
     return apiRequest<AnalysisResult>('/api/analyze', {
@@ -126,7 +264,7 @@ export const api = {
   },
 
   // File upload
-  async uploadSWISData(file: File) {
+  async uploadSWISData(file: File): Promise<UploadResult> {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -141,6 +279,29 @@ export const api = {
     }
 
     return response.json();
+  },
+
+  // ML-based CDF analysis
+  async analyzeCDFWithML(file: File): Promise<MLAnalysisResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/api/ml/analyze-cdf`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new ApiError(response.status, errorText);
+    }
+
+    return response.json();
+  },
+
+  // Get ML model information
+  async getMLModelInfo(): Promise<MLModelInfo> {
+    return apiRequest<MLModelInfo>('/api/ml/model-info');
   },
 };
 
@@ -202,6 +363,26 @@ export const useApi = () => {
         },
       });
     },
+
+    // ML Analysis mutations
+    useAnalyzeCDFWithML: () => {
+      const queryClient = useQueryClient();
+      return useMutation({
+        mutationFn: api.analyzeCDFWithML,
+        onSuccess: (data) => {
+          // Cache ML analysis results
+          queryClient.setQueryData(['ml-analysis', data.file_info.filename], data);
+          queryClient.invalidateQueries({ queryKey: ['data-summary'] });
+        },
+      });
+    },
+
+    // ML Model info query
+    useMLModelInfo: () => useQuery({
+      queryKey: ['ml-model-info'],
+      queryFn: api.getMLModelInfo,
+      staleTime: 600000, // 10 minutes
+    }),
   };
 };
 
