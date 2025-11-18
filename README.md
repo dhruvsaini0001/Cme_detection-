@@ -385,14 +385,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **NASA SPDF** for CDF library tools
 - **Open Source Community** for the amazing tools and libraries
 
-## 📞 Support
-
-For questions, issues, or contributions:
-- **Issues**: [GitHub Issues](https://github.com/Karann1101/Identifying-HALO-CME-Events-based-on-Particle-Data/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Karann1101/Identifying-HALO-CME-Events-based-on-Particle-Data/discussions)
-- **Email**: [Your Email]
-
 ---
 
-**Built with ❤️ for space weather research and early warning systems**#   A d i t y a _ L 1  
+**Built with ❤️ for space weather research and early warning systems**#   A d i t y a _ L 1 
+ 
  
